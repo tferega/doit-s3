@@ -3,10 +3,9 @@ package hr.element.doit.s3
 import scala.collection.{ mutable => mut }
 
 import scalaz._ ; import Scalaz._
+import scalaz.concurrent._
 
-import scala.actors._
-import scala.concurrent.ops._
-import scala.concurrent.JavaConversions
+import scala.concurrent.Lock
 
 import java.util.concurrent.Executors
 
@@ -23,54 +22,6 @@ import org.apache.commons.io.IOUtils.toByteArray
 
 import serio.Encode ; import serio.Decode
 
-/**
- * Some goodies and a standalone S3 entry point.
- */
-object S3 {
-
-  lazy val instance = new S3 start
-
-  def store [A] (key: String, dataz: A)
-    ( implicit bucket  : S3BucketDescription
-    ,          ev      : Encode[A]
-    ): Future[Any]
-    = (instance !! Store (bucket, key, dataz)) 
-
-  def load [A] (key: String)
-    ( implicit bucket : S3BucketDescription
-    ,          ev     : Decode[A]
-    ): Future[Any]
-    = (instance !! Load (bucket, key))
-
-}
-
-/**
- * A single request for a single store operation.
- * @param bucket access info
- * @param key key name / file name
- * @param dataz meat
- */
-class Store (
-    val bucket : S3BucketDescription
-  , val key    : String
-  , val dataz  : Array[Byte]
-)
-
-object Store {
-  def apply [A: Encode] (bucket: S3BucketDescription, key: String, dataz: A)
-    = new Store (bucket, key, Encode.encode [A] (dataz))
-  def unapply (s: Store) = Some ((s.bucket, s.key, s.dataz))
-}
-
-/**
- * A single request for a single load operation.
- * @param bucket access info
- * @param key key name / file name
- */
-case class Load (
-    val bucket : S3BucketDescription
-  , val key    : String
-)
 
 /**
  * Bucket and its associated security context.
@@ -84,48 +35,62 @@ case class S3BucketDescription (
   , secret     : Option[Array[Byte]] = None
 )
 
-class S3 extends DaemonActor {
+object S3 {
 
-  def act = loop { react {
+  implicit def unboundedStrat = Strategy.Executor (Executors.newCachedThreadPool)
 
-    case Store (S3BucketDescription (bucket, creds, secret), key, what) =>
+  def store [A] (key: String, dataz: A)
+    ( implicit s3b : S3BucketDescription
+    ,          ev  : Encode[A]
+    ) : Promise[Unit] = promise {
 
-      val client = clients ((creds, secret))
+    val wat = Encode.encode[A] (dataz)
 
-      spawn_ {
+    val S3BucketDescription (bucket, creds, secret) = s3b
+    val client = S3Gate client ((creds, secret))
 
-        val meta = new ObjectMetadata
-        meta setContentLength what.length
+    val meta = new ObjectMetadata
+    meta setContentLength wat.length
 
-        def putf = client putObject (
-          bucket, key, new ByteArrayInputStream (what), meta
-        )
+    def putf = client putObject (
+      bucket, key, new ByteArrayInputStream (wat), meta
+    )
 
-        try putf catch {
-          case e: AmazonS3Exception if e.getErrorCode == "NoSuchBucket" =>
-            client createBucket bucket ;
-            putf
-        }
-      }
-
-    case Load (S3BucketDescription (bucket, creds, secret), key) =>
-
-      val client = clients ((creds, secret))
-      spawn_ { toByteArray ( client getObject (bucket, key) getObjectContent ) }
-
-  } }
-
-  // Hence, `spawn`s are queued to an unbounded, self-shrinking thread pool.
-  implicit val runner = JavaConversions asTaskRunner Executors.newCachedThreadPool
-
-  def spawn_ (wat: => Any) = {
-    val sender0 = sender
-    spawn { 
-      sender0 ! ( try wat catch { case e: Exception => e } )
+    try putf catch {
+      case e: AmazonS3Exception if e.getErrorCode == "NoSuchBucket" =>
+        client createBucket bucket ;
+        putf
     }
+
+    Unit
   }
 
+  def load [A] (key: String)
+    ( implicit s3b : S3BucketDescription
+    ,          ev  : Decode[A]
+    ) : Promise[A] = promise {
+
+    val S3BucketDescription (bucket, creds, secret) = s3b
+
+    val client = S3Gate client ((creds, secret))
+    val resp   = client getObject (bucket, key) ;
+
+    Decode.decode[A] ( toByteArray (resp.getObjectContent) )
+  }
+
+}
+
+object S3Gate {
+
   type ClientKey = ((String, String), Option[Array[Byte]])
+  
+  def client (key: ClientKey) = {
+    mutex.acquire
+    try clients (key)
+    finally mutex.release
+  }
+
+  private val mutex = new Lock
 
   // One s3 client per access config, because they parallelize well.
   private val clients: mut.Map[ClientKey, AmazonS3] = mut.Map () withDefault {
@@ -146,16 +111,3 @@ class S3 extends DaemonActor {
 
 }
 
-
-// // Migrate me to common utils.
-// private [s3] trait Logs {
-
-//   private def l (f: (AnyRef, => String) => Unit) : ((String, AnyRef*) => Unit)
-//     = (msg, params) => f (this, msg.format (params: _*))
-
-//   import akka.event.{EventHandler => eh}
-//   protected object log {
-//     val info  = l (eh.info)
-//     val error = l (eh.error)
-//   }
-// }
