@@ -37,7 +37,8 @@ case class S3BucketDescription (
 
 object S3 {
 
-  implicit def unboundedStrat = Strategy.Executor (Executors.newCachedThreadPool)
+  // XXX This means it will start to refuse concurrent ops after 1000-th.
+  implicit val strat = Strat.cachedTo (1000)
 
   def store [A] (key: String, dataz: A)
     ( implicit s3b : S3BucketDescription
@@ -93,6 +94,7 @@ object S3Gate {
   private val mutex = new Lock
 
   // One s3 client per access config, because they parallelize well.
+  // XXX but not 1000-s-well...
   private val clients: mut.Map[ClientKey, AmazonS3] = mut.Map () withDefault {
 
     case k@((accessKey, secretKey), crypto) =>
@@ -111,3 +113,22 @@ object S3Gate {
 
 }
 
+object Strat {
+
+  import java.util.concurrent._
+
+  def daemonicTF = new ThreadFactory {
+    val deftf = Executors.defaultThreadFactory
+    def newThread (r: Runnable) = {
+      val t = deftf newThread r ; t setDaemon true ; t
+    }
+  }
+
+  def cachedTo (n: Int) =
+    Strategy.Executor (
+      new ThreadPoolExecutor (
+        0, n, 60L, TimeUnit.SECONDS
+      , new SynchronousQueue[Runnable]
+      , daemonicTF
+    ) )
+}
