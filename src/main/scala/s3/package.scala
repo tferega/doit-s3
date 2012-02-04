@@ -3,7 +3,7 @@ package hr.element.doit
 import java.util.Properties
 import scala.collection.JavaConverters._
 
-protected [doit] object Props {
+private [doit] object Props {
 
   def mk (f: Properties => Any) = {
     val props = new Properties
