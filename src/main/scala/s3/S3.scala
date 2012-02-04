@@ -87,26 +87,33 @@ object S3Gate {
 
   // One s3 client per access config, because they parallelize well.
   // XXX but not 1000-s-well...
-  private [s3] val clients: mut.Map[ClientKey, AmazonS3] = mut.Map () withDefault {
+  private [s3] val clients = cache [ClientKey, AmazonS3] {
 
     case k@((accessKey, secretKey), crypto) =>
 
-      synchronized {
+      val creds = new BasicAWSCredentials (accessKey, secretKey)
 
-        clients get k getOrElse {
+      crypto fold (
+        key => new AmazonS3EncryptionClient ( creds,
+                    new EncryptionMaterials ( new SecretKeySpec (key, "AES")) )
+      , new AmazonS3Client (creds) )
+  }
 
-          val creds  = new BasicAWSCredentials (accessKey, secretKey)
-          val client = crypto fold (
-              key => new AmazonS3EncryptionClient (creds,
-                new EncryptionMaterials (new SecretKeySpec (key, "AES"))) ,
-              new AmazonS3Client (creds)
-            )
 
-          clients += (k -> client)
-          client
+  def cache [A, B] (create: A => B): A => B = {
 
-    } } }
+    lazy val map : mut.Map [A, B] =
 
+      mut.Map () withDefault { key =>
+
+        synchronized {
+          map get key getOrElse {
+            val x = create (key)
+            map += (key -> x) ; x
+      } } }
+
+    map
+  }
 }
 
 object Strat {
