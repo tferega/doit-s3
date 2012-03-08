@@ -3,7 +3,7 @@ name         := "doit-S3"
 
 version      := "0.0.1"
 
-organization := "hr.element"
+organization := "hr.element.doit"
 
 scalaVersion := "2.9.1"
 
