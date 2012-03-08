@@ -13,9 +13,9 @@ publishArtifact in (Compile, packageDoc) := false
 
 publishTo <<= (version) { version => Some(
   if (version.endsWith("SNAPSHOT"))
-    "Element Private Snapshots" at "http://maven.element.hr/nexus/content/repositories/snapshots-private/"
+    "Element Snapshots" at "http://maven.element.hr/nexus/content/repositories/snapshots/"
   else
-    "Element Private Releases"  at "http://maven.element.hr/nexus/content/repositories/releases-private/"
+    "Element Releases"  at "http://maven.element.hr/nexus/content/repositories/releases/"
 )}
 
 libraryDependencies ++= Seq (
