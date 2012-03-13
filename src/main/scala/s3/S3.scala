@@ -1,137 +1,131 @@
-package hr.element.doit.s3
+package hr.element.doit
+package s3
 
-import scala.collection.{ mutable => mut }
+import serio.{ Decode, Encode }
 
-import scalaz._ ; import Scalaz._
-import scalaz.concurrent._
-
-import scala.concurrent.Lock
-
-import java.util.concurrent.Executors
-
-import com.amazonaws.services.{ s3 => as3 }
-import as3.{ AmazonS3, AmazonS3Client, AmazonS3EncryptionClient }
-import as3.model.{ EncryptionMaterials, ObjectMetadata, AmazonS3Exception }
+import com.amazonaws.{ AmazonClientException, AmazonServiceException }
 import com.amazonaws.auth.BasicAWSCredentials
 import com.amazonaws.services.importexport.model.NoSuchBucketException
+import com.amazonaws.services.s3.{ AmazonS3, AmazonS3Client, AmazonS3EncryptionClient }
+import com.amazonaws.services.s3.model.{ EncryptionMaterials, ObjectMetadata, AmazonS3Exception }
+
+import java.io.ByteArrayInputStream
+import java.util.concurrent.Executors
 
 import javax.crypto.spec.SecretKeySpec
-import java.io.ByteArrayInputStream
 
 import org.apache.commons.io.IOUtils.toByteArray
 
-import serio.Encode ; import serio.Decode
+import scala.collection.{ mutable => mut }
+import scala.concurrent.Lock
+
+import scalaz.concurrent._
+import scalaz.Scalaz._
 
 
-/**
- * Bucket and its associated security context.
- * @param bucketName Name of the bucket.
- * @param creds Amazon ID + Access key.
- * @param secret [It might be an] encryption key.
- */
-case class S3BucketDescription (
-    bucketName : String
-  , creds      : (String, String)
-  , secret     : Option[Array[Byte]] = None
-)
+case class S3Credentials(accessKey: String, secretKey: String)
+case class S3Bucket(
+    name:        String,
+    credentials: S3Credentials,
+    secret:      Option[Array[Byte]] = None)
+
 
 object S3 {
-
-  // XXX This means it will start to refuse concurrent ops after 1000-th.
+  // Limits number of concurrent operations to 1000.
   implicit val strat = Strat.cachedTo (1000)
 
-  def store [A] (key: String, dataz: A)
-    ( implicit s3b : S3BucketDescription
-    ,          ev  : Encode[A]
-    ) : Promise[Unit] = promise {
+  def store[A]
+      (key: String, data: A)
+      (implicit bucket: S3Bucket, ev: Encode[A]):
+      Promise[Either[Exception, Unit]] =
+    promise {
+      try {
+        val encodedData = Encode.encode[A](data)
+        val client = S3Gate.clients((bucket.credentials, bucket.secret))
 
-    val wat = Encode.encode[A] (dataz)
+        val meta = new ObjectMetadata
+        meta setContentLength encodedData.length
 
-    val S3BucketDescription (bucket, creds, secret) = s3b
-    val client = S3Gate clients ((creds, secret))
+        client.putObject(
+          bucket.name, key, new ByteArrayInputStream(encodedData), meta)
 
-    val meta = new ObjectMetadata
-    meta setContentLength wat.length
-
-    def putf = client putObject (
-      bucket, key, new ByteArrayInputStream (wat), meta
-    )
-
-    try putf catch {
-      case e: AmazonS3Exception if e.getErrorCode == "NoSuchBucket" =>
-        client createBucket bucket ;
-        putf
+        Right()
+      } catch {
+        case e: AmazonClientException  => Left(new Exception("An error occured in the client while making the request or handling the response.", e))
+        case e: AmazonServiceException => Left(new Exception("An error occured in Amazon S3 while processing the request.", e))
+        case e: Exception              => Left(new Exception("An unexpected error occured.", e))
+      }
     }
 
-    Unit
+
+  def load[A](key: String)
+      (implicit bucket: S3Bucket, ev: Decode[A]):
+      Promise[Either[Exception, A]] =
+    promise {
+      try {
+        val client   = S3Gate.clients((bucket.credentials, bucket.secret))
+        val response = client.getObject(bucket.name, key)
+        val result   = Decode.decode[A](toByteArray(response.getObjectContent))
+
+        Right(result)
+      } catch {
+        case e: AmazonClientException  => Left(new Exception("An error occured in the client while making the request or handling the response.", e))
+        case e: AmazonServiceException => Left(new Exception("An error occured in Amazon S3 while processing the request.", e))
+        case e: Exception              => Left(new Exception("An unexpected error occured.", e))
+      }
   }
-
-  def load [A] (key: String)
-    ( implicit s3b : S3BucketDescription
-    ,          ev  : Decode[A]
-    ) : Promise[A] = promise {
-
-    val S3BucketDescription (bucket, creds, secret) = s3b
-
-    val client = S3Gate clients ((creds, secret))
-    val resp   = client getObject (bucket, key) ;
-
-    Decode.decode[A] ( toByteArray (resp.getObjectContent) )
-  }
-
 }
 
+
+
 object S3Gate {
+  type ClientKey = (S3Credentials, Option[Array[Byte]])
 
-  type ClientKey = ((String, String), Option[Array[Byte]])
-
-  // One s3 client per access config, because they parallelize well.
-  // XXX but not 1000-s-well...
-  private [s3] val clients = cache [ClientKey, AmazonS3] {
-
-    case k@((accessKey, secretKey), crypto) =>
-
-      val creds = new BasicAWSCredentials (accessKey, secretKey)
-
+  // One S3 client per access config, because they parallelize well (until up to 1000).
+  private[s3] val clients = cache[ClientKey, AmazonS3] {
+    case k @ (S3Credentials(accessKey, secretKey), crypto) =>
+      val creds = new BasicAWSCredentials(accessKey, secretKey)
       crypto fold (
-        key => new AmazonS3EncryptionClient ( creds,
-                    new EncryptionMaterials ( new SecretKeySpec (key, "AES")) )
-      , new AmazonS3Client (creds) )
+        key => new AmazonS3EncryptionClient(creds, new EncryptionMaterials(new SecretKeySpec(key, "AES"))),
+        new AmazonS3Client(creds)
+      )
   }
 
-
-  def cache [A, B] (create: A => B): A => B = {
-
+  def cache[A, B](create: A => B): A => B = {
     lazy val map : mut.Map [A, B] =
-
       mut.Map () withDefault { key =>
-
         synchronized {
           map get key getOrElse {
             val x = create (key)
-            map += (key -> x) ; x
-      } } }
-
-    map
+            map += (key -> x)
+            x
+          }
+        }
+      }
+      map
   }
 }
 
-object Strat {
 
+
+object Strat {
   import java.util.concurrent._
 
   def daemonicTF = new ThreadFactory {
     val deftf = Executors.defaultThreadFactory
-    def newThread (r: Runnable) = {
-      val t = deftf newThread r ; t setDaemon true ; t
+    def newThread(r: Runnable) = {
+      val t = deftf newThread r
+      t setDaemon true
+      t
     }
   }
 
   def cachedTo (n: Int) =
-    Strategy.Executor (
+    Strategy.Executor(
       new ThreadPoolExecutor (
-        0, n, 60L, TimeUnit.SECONDS
-      , new SynchronousQueue[Runnable]
-      , daemonicTF
-    ) )
+        0, n, 60L, TimeUnit.SECONDS,
+        new SynchronousQueue[Runnable],
+        daemonicTF
+    )
+  )
 }
