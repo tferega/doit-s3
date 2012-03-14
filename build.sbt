@@ -1,7 +1,7 @@
 
 name         := "doit-S3"
 
-version      := "0.0.2"
+version      := "0.0.3"
 
 organization := "hr.element.doit"
 
