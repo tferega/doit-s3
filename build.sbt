@@ -24,3 +24,6 @@ libraryDependencies ++= Seq (
   , "com.amazonaws" % "aws-java-sdk" % "1.2.15"
   )
 
+unmanagedSourceDirectories in Test := Nil
+
+unmanagedSourceDirectories in Compile <<= (scalaSource in Compile)( _ :: Nil)
