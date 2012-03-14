@@ -27,3 +27,5 @@ libraryDependencies ++= Seq (
 unmanagedSourceDirectories in Test := Nil
 
 unmanagedSourceDirectories in Compile <<= (scalaSource in Compile)( _ :: Nil)
+
+initialCommands := "import hr.element.doit._; import s3._; import statistics._;"
