@@ -1,4 +1,6 @@
-package hr.element.doit.s3.serio
+package hr.element.doit
+package s3
+package serio
 
 import java.nio.charset.Charset
 
