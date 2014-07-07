@@ -19,9 +19,8 @@ object S3Gate {
   private[s3] val clients = cache[ClientKey, AmazonS3] {
     case k @ (S3Credentials(accessKey, secretKey), crypto) =>
       val creds = new BasicAWSCredentials(accessKey, secretKey)
-      crypto fold (
-        key => new AmazonS3EncryptionClient(creds, new EncryptionMaterials(new SecretKeySpec(key, "AES"))),
-        new AmazonS3Client(creds)
+      crypto.fold(new AmazonS3Client(creds))(
+        key => new AmazonS3EncryptionClient(creds, new EncryptionMaterials(new SecretKeySpec(key, "AES")))
       )
   }
 
