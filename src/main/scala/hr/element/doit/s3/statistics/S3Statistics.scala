@@ -2,7 +2,6 @@ package hr.element.doit
 package s3
 package statistics
 
-
 object Timer {
   def t = System.currentTimeMillis()
 
@@ -14,6 +13,5 @@ object Timer {
     Timer((end - start), result)
   }
 }
-
 
 case class Timer[T](time: Long, result: T)

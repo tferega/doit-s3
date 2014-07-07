@@ -35,5 +35,3 @@ trait EncDecInstances extends EncDecLow {
 }
 
 object Instances extends EncDecInstances
-
-

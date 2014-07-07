@@ -12,7 +12,7 @@ import java.io.ByteArrayInputStream
 import org.apache.commons.io.IOUtils.toByteArray
 
 import scalaz.concurrent.Promise
-import scalaz.Scalaz._
+import scalaz._, Scalaz._
 
 
 object S3 {

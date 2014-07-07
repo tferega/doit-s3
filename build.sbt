@@ -1,31 +1,29 @@
+organization := "hr.element.doit"
 
-name         := "doit-S3"
+name         := "doit-s3"
 
 version      := "0.0.3"
 
-organization := "hr.element.doit"
+scalaVersion := "2.10.4"
 
-scalaVersion := "2.9.1"
-
-credentials += Credentials(Path.userHome / ".publish" / "element.credentials")
+credentials += Credentials(Path.userHome / ".config" / "doit-s3" / "nexus.config")
 
 publishArtifact in (Compile, packageDoc) := false
 
-publishTo <<= (version) { version => Some(
-  if (version.endsWith("SNAPSHOT"))
-    "Element Snapshots" at "http://maven.element.hr/nexus/content/repositories/snapshots/"
+publishTo := Some(if (version.value endsWith "SNAPSHOT")
+    "Element Snapshots" at "http://repo.element.hr/nexus/content/repositories/snapshots/"
   else
-    "Element Releases"  at "http://maven.element.hr/nexus/content/repositories/releases/"
-)}
+    "Element Releases"  at "http://repo.element.hr/nexus/content/repositories/releases/"
+)
 
 libraryDependencies ++= Seq (
-    "org.scalaz" %% "scalaz-core" % "6.0.4"
-  , "commons-io" % "commons-io" % "2.1"
-  , "com.amazonaws" % "aws-java-sdk" % "1.2.15"
-  )
+  "org.scalaz" %% "scalaz-core" % "6.0.4"
+, "commons-io" % "commons-io" % "2.4"
+, "com.amazonaws" % "aws-java-sdk" % "1.8.3" % "provided"
+)
 
 unmanagedSourceDirectories in Test := Nil
 
-unmanagedSourceDirectories in Compile <<= (scalaSource in Compile)( _ :: Nil)
+unmanagedSourceDirectories in Compile := Seq((scalaSource in Compile).value)
 
 initialCommands := "import hr.element.doit._; import s3._; import statistics._;"
